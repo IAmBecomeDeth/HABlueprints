@@ -1,0 +1,82 @@
+blueprint:
+  name: Synchronize Slave Lights to Master state
+  description: Trigger on Master Light state change. Copy Master state and brightness to Slave.
+  domain: automation
+
+  input:
+    master_light:
+      name: Master Light 
+      description: This light will be used for trigger and state source
+      selector:
+        entity:
+          domain: light
+    slave_light:
+      name: Slave Light
+      description: The lights which will turn on and off and change brightness with Master.
+      selector:
+        entity:
+          domain: light
+variables:
+  master_light: !input master_light
+  slave_light: !input slave_light #in case needed in future
+  to_brightness: "{{ state_attr(trigger.entity_id, 'brightness') }}"
+trigger:
+  - platform: state
+    entity_id: !input master_light
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    id: master
+
+  - platform: state
+    entity_id: !input slave_light
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    id: slave
+
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state.context.parent_id is none or
+      trigger.from_state.context.id == this.context.parent_id or
+      (trigger.to_state.context.id         != this.context.id and
+       trigger.to_state.context.parent_id  != this.context.id) }}
+
+
+action:
+  - choose:
+      - conditions:
+        - condition: trigger
+          id: master
+        - "{{ is_state(master_light, 'on') }}"
+        sequence:
+          - service: light.turn_on
+            data: 
+              brightness: |
+                {{ to_brightness | int(255) }}
+            target:
+              entity_id: !input slave_light
+      - conditions:
+        - condition: trigger
+          id: slave
+        - "{{ is_state(slave_light, 'on') }}"
+        sequence:
+          - service: light.turn_on
+            data:
+              brightness: |
+                {{ to_brightness | int(255) }}
+            target:
+              entity_id: !input master_light
+    default:
+      - service: light.turn_off
+        data: {}
+        target:
+          entity_id: 
+            - !input slave_light
+            - !input master_light
+mode: single
+max_exceeded: silent
+

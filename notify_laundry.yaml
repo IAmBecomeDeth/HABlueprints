@@ -1,0 +1,126 @@
+blueprint:
+  name: Laundry Cycle Monitor
+  description: >
+    Trigger when the washing machine power goes above 100 W and wait until it
+    drops below 100 W. Also, trigger when the dryer vibration sensor detects
+    vibration for 1 minute and wait until it stops vibrating for 5 minutes.
+  domain: automation
+  input:
+    washing_machine_sensor:
+      name: Washing Machine Power Sensor
+      description: The sensor that monitors the washing machine's power consumption
+      selector:
+        entity:
+          domain: sensor
+      default: ''
+    dryer_vibration_sensor:
+      name: Dryer Vibration Sensor
+      description: The sensor that monitors the dryer's vibration
+      selector:
+        entity:
+          domain: binary_sensor
+      default: ''
+    notify_services:
+      name: Notification Services
+      description: Select the notification services to use
+      selector:
+        select:
+          options:
+            - notify.mobile_app_justin_s_iphone_15
+            - notify.mobile_app_anthonys_iphone_15_pro_max
+          multiple: true
+
+trigger:
+  # Washing machine start trigger
+  - platform: numeric_state
+    entity_id: !input washing_machine_sensor
+    above: 100
+    for: "00:05:00"
+    id: washing_machine_start
+    enabled: "{{ washing_machine_sensor != '' }}"
+
+  # Washing machine finish trigger
+  - platform: numeric_state
+    entity_id: !input washing_machine_sensor
+    below: 100
+    for: "00:02:00"
+    id: washing_machine_done
+    enabled: "{{ washing_machine_sensor != '' }}"
+
+  # Dryer start trigger
+  - platform: state
+    entity_id: !input dryer_vibration_sensor
+    from:
+      - 'off'
+      - 'unknown'
+    to: 'on'
+    for: "00:05:00"
+    id: dryer_start
+    enabled: "{{ dryer_vibration_sensor != '' }}"
+
+  # Dryer finish trigger
+  - platform: state
+    entity_id: !input dryer_vibration_sensor
+    from: 'on'
+    to:
+      - 'off'
+      - 'unknown'
+    for: "00:05:00"
+    id: dryer_done
+    enabled: "{{ dryer_vibration_sensor != '' }}"
+
+condition: []
+
+action:
+  - variables:
+      notify_services: !input notify_services
+      washing_machine_sensor: !input washing_machine_sensor
+      dryer_vibration_sensor: !input dryer_vibration_sensor
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: washing_machine_start
+        sequence:
+          - repeat:
+              for_each: "{{ notify_services }}"
+              sequence:
+                - service: "{{ repeat.item }}"
+                  data:
+                    message: "Washing Machine is starting"
+                    title: "Washing Machine"
+      - conditions:
+          - condition: trigger
+            id: washing_machine_done
+        sequence:
+          - repeat:
+              for_each: "{{ notify_services }}"
+              sequence:
+                - service: "{{ repeat.item }}"
+                  data:
+                    message: "Washing Machine is done"
+                    title: "Washing Machine"
+      - conditions:
+          - condition: trigger
+            id: dryer_start
+        sequence:
+          - repeat:
+              for_each: "{{ notify_services }}"
+              sequence:
+                - service: "{{ repeat.item }}"
+                  data:
+                    message: "Dryer is starting"
+                    title: "Dryer"
+      - conditions:
+          - condition: trigger
+            id: dryer_done
+        sequence:
+          - repeat:
+              for_each: "{{ notify_services }}"
+              sequence:
+                - service: "{{ repeat.item }}"
+                  data:
+                    message: "Dryer is done"
+                    title: "Dryer"
+
+mode: parallel
+max: 10

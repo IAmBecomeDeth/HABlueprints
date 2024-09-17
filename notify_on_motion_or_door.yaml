@@ -1,0 +1,126 @@
+blueprint:
+  name: Notify on Motion or Door
+  description: Sends notifications to selected devices when motion is detected or doors are opened while selected people are away.
+  domain: automation
+  input:
+    sensors:
+      name: Motion, Door, or Action Sensors
+      description: Select the motion, door, or action sensors to monitor
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - sensor  # Added sensor domain
+          multiple: true
+    always_notify_sensors:
+      name: Always Notify Sensors
+      description: Select sensors that should always trigger a notification, regardless of home/away status
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - sensor  # Added sensor domain
+          multiple: true
+      default: []
+    people:
+      name: People to Monitor
+      description: Select one or more people to monitor (optional, if none selected, will always notify)
+      selector:
+        entity:
+          domain: person
+          multiple: true
+      default: []
+    notify_services:
+      name: Notification Services
+      description: Select the notification services to use
+      selector:
+        select:
+          options:
+            - notify.mobile_app_justin_s_iphone_15
+            - notify.mobile_app_anthonys_iphone_15_pro_max
+          multiple: true
+    friendly_names:
+      name: Friendly Names
+      description: Comma-separated list of shorter names for each sensor, in the same order as selected sensors
+      selector:
+        text:
+          type: text
+
+
+trigger:
+  - platform: state
+    entity_id: !input sensors
+    to: 
+      - "on"
+      - "Open"
+      - "Detected"
+      - "opening"
+  - platform: state
+    entity_id: !input sensors
+    from: "closing"
+    to: "Open"
+
+variables:
+  sensors: !input sensors
+  people: !input people
+  notify_services: !input notify_services
+  friendly_names: !input friendly_names
+  friendly_name_list: "{{ friendly_names.split(',') }}"
+  always_notify_sensors: !input always_notify_sensors
+  is_away: >
+    {% set ns = namespace() %}
+    {% set ns.away_people = [] %}
+    {% for person in people %}
+      {% if is_state(person, 'not_home') %}
+        {% set ns.away_people = ns.away_people + [state_attr(person, 'friendly_name')] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.away_people | length > 0 }}
+  #is_away: >
+  #  {{ people | selectattr('state', 'eq', 'not_home') | map(attribute='attributes.friendly_name') | join(', ') }}
+
+  friendly_name_list: "{{ friendly_names.split(',') }}"
+action:
+  - variables:
+      sensor_index: "{{ sensors.index(trigger.entity_id) }}"
+      friendly_name: "{{ friendly_name_list[sensor_index] if sensor_index < friendly_name_list | length else triggered_entity.split('.')[-1] | replace('_', ' ') | title }}"
+      friendly_name_ha: >
+        {% set name = state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id.split('.')[-1] | replace('_', ' ') | title %}
+        {% set name = name | regex_replace('(?i)door door', 'Door') %}
+        {% set name = name | regex_replace('(?i)drawer door', 'Drawer') %}
+        {{ name }}
+      is_doorbell_action: "{{ 'doorbell' in trigger.entity_id }}"
+      is_door_sensor: "{{ '_contact' in trigger.entity_id }}"
+      is_motion_sensor: "{{ 'motion' in trigger.entity_id }}"
+      is_action: "{{ 'action' in trigger.entity_id }}"
+      is_button: "{{ 'button' in trigger.entity_id }}"
+      full_sensor_name: "{{ friendly_name_list[sensor_index] if sensor_index < friendly_name_list | length else trigger.entity_id.split('.')[-1] | replace('_', ' ') | title }}"
+      home_away_status: "{{ 'away' if is_away else 'home' }}"
+      is_doorbell_action: "{{ trigger.entity_id == 'sensor.front_door_doorbell_action' }}"
+
+      #should_notify: >
+      #  {{ is_away or trigger.entity_id in always_notify_sensors }}
+      should_notify: >
+          {{ is_away or (trigger.entity_id in always_notify_sensors) }}
+      
+  - choose:
+      - conditions: "{{ should_notify }}"
+        sequence:
+          - repeat:
+              for_each: "{{ notify_services }}"
+              sequence:
+                - service: "{{ repeat.item }}"
+                  data:
+                    title: "{{ friendly_name }} Alert"
+                    message: >-
+                      {% if is_doorbell_action %}
+                        Someone rang the doorbell while you were {{ home_away_status }}.
+                      {% elif is_door_sensor %}
+                        Someone opened {{ friendly_name }} while you were {{ home_away_status }}.
+                      {% elif is_motion_sensor %}
+                        Motion was detected by {{ friendly_name }} while you were {{ home_away_status }}.
+                      {% else %}
+                        {{ friendly_name }} was triggered while you were {{ home_away_status }}.
+                      {% endif %}
+
+mode: parallel

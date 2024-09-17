@@ -1,0 +1,74 @@
+blueprint:
+  name: Zigbee Button Control via MQTT
+  description: >
+    Control lights or light groups with single, double, and hold actions on a Zigbee button.
+  domain: automation
+  input:
+    button_device:
+      name: Button Device
+      description: Select the Zigbee button to use
+      selector:
+        device:
+          integration: mqtt
+          entity:
+            domain: sensor
+
+    single_action:
+      name: Single Press Action
+      description: Action for single press (optional)
+      selector:
+        action: {}
+      default: []
+
+    double_action:
+      name: Double Press Action
+      description: Action for double press (optional)
+      selector:
+        action: {}
+      default: []
+
+    hold_action:
+      name: Hold Action
+      description: Action for hold (optional)
+      selector:
+        action: {}
+      default: []
+
+trigger:
+  - platform: device
+    domain: mqtt
+    device_id: !input button_device
+    type: action
+    subtype: single
+    id: single_press
+
+  - platform: device
+    domain: mqtt
+    device_id: !input button_device
+    type: action
+    subtype: double
+    id: double_press
+
+  - platform: device
+    domain: mqtt
+    device_id: !input button_device
+    type: action
+    subtype: hold
+    id: hold_press
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: single_press
+        sequence: !input single_action
+
+      - conditions:
+          - condition: trigger
+            id: double_press
+        sequence: !input double_action
+
+      - conditions:
+          - condition: trigger
+            id: hold_press
+        sequence: !input hold_action

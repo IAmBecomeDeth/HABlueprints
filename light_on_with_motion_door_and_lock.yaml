@@ -1,0 +1,231 @@
+blueprint:
+  name: "Door, Motion, and Closet/Cabinet Activated Light"
+  description: "Turn on a light when a door opens, motion is detected, or a closet/cabinet door opens/closes, with configurable durations for each trigger type"
+  domain: automation
+  input:
+    door_sensors:
+      name: Door Sensors
+      description: Select one or more door sensors (optional)
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    occupancy_sensors:
+      name: Occupancy Sensors
+      description: Select one or more occupancy sensors (optional)
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    long_lasting_motion_sensors:
+      name: Long-lasting Motion Sensors
+      description: Select motion sensors that stay on for extended periods (optional)
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    closet_door_sensors:
+      name: Closet/Cabinet Door Sensors
+      description: Select one or more closet or cabinet door sensors (optional)
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    light:
+      name: Light
+      description: Select the light to control
+      selector:
+        entity:
+          domain: light
+    door_duration:
+      name: Door Duration
+      description: Number of minutes to keep the light on after door activity
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+    motion_duration:
+      name: Motion Duration
+      description: Number of minutes to keep the light on after motion detection
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+    closet_duration:
+      name: Closet/Cabinet Duration
+      description: Number of minutes to keep the light on if a closet/cabinet door is left open
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+
+trigger:
+  - platform: state
+    entity_id: !input door_sensors
+    to: 
+      - "on"
+      - "open"
+    id: "door"
+  - platform: state
+    entity_id: !input occupancy_sensors
+    to: "on"
+    id: "motion"
+  - platform: state
+    entity_id: !input long_lasting_motion_sensors
+    to: "on"
+    id: "long_motion"
+  - platform: state
+    entity_id: !input closet_door_sensors
+    to: "on"
+    id: "closet_open"
+  - platform: state
+    entity_id: !input closet_door_sensors
+    to: "off"
+    id: "closet_close"
+
+variables:
+  door_sensors: !input door_sensors
+  occupancy_sensors: !input occupancy_sensors
+  long_lasting_motion_sensors: !input long_lasting_motion_sensors
+  closet_door_sensors: !input closet_door_sensors
+  door_duration: !input door_duration
+  motion_duration: !input motion_duration
+  closet_duration: !input closet_duration
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: closet_open
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light
+          - repeat:
+              sequence:
+                - wait_for_trigger:
+                    - platform: state
+                      entity_id: !input closet_door_sensors
+                    - platform: template
+                      value_template: >
+                        {{ closet_door_sensors | selectattr('state', 'eq', 'on') | list | length == 0 }}
+                  timeout:
+                    minutes: !input closet_duration
+                - if:
+                    condition: template
+                    value_template: >
+                      {{ wait.trigger is defined and wait.trigger.platform == 'template' }}
+                  then:
+                    - service: light.turn_off
+                      target:
+                        entity_id: !input light
+                    - stop: "All closet/cabinet doors closed"
+              until:
+                - condition: template
+                  value_template: "{{ wait.trigger is not defined }}"
+          - service: light.turn_off
+            target:
+              entity_id: !input light
+      - conditions:
+          - condition: trigger
+            id: closet_close
+        sequence:
+          - if:
+              condition: template
+              value_template: >
+                {{ closet_door_sensors | selectattr('state', 'eq', 'on') | list | length == 0 }}
+            then:
+              - service: light.turn_off
+                target:
+                  entity_id: !input light
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: door
+              - condition: trigger
+                id: motion
+              - condition: trigger
+                id: long_motion
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light
+          - variables:
+              door_active: false
+              motion_active: false
+              last_active: "{{ trigger.id }}"
+          - repeat:
+              while:
+                - condition: template
+                  value_template: "{{ door_active or motion_active }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ door_sensors | length > 0 }}"
+                      sequence:
+                        - wait_for_trigger:
+                            platform: state
+                            entity_id: !input door_sensors
+                            to: 
+                              - "off"
+                              - "closed"
+                            for:
+                              seconds: 1
+                        - variables:
+                            last_active: "door"
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ occupancy_sensors | length > 0 }}"
+                      sequence:
+                        - wait_for_trigger:
+                            platform: state
+                            entity_id: !input occupancy_sensors
+                            to: "off"
+                            for:
+                              seconds: 10
+                        - variables:
+                            last_active: "motion"
+                - variables:
+                    door_active: "{{ door_sensors | selectattr('state', 'in', ['on', 'open']) | list | length > 0 if door_sensors else false }}"
+                    motion_active: "{{ occupancy_sensors | selectattr('state', 'eq', 'on') | list | length > 0 if occupancy_sensors else false }}"
+                - delay:
+                    seconds: 1
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ last_active == 'door' }}"
+                sequence:
+                  - delay:
+                      minutes: !input door_duration
+              - conditions:
+                  - condition: template
+                    value_template: "{{ last_active == 'motion' }}"
+                sequence:
+                  - delay:
+                      minutes: !input motion_duration
+              - conditions:
+                  - condition: template
+                    value_template: "{{ last_active == 'long_motion' }}"
+                sequence:
+                  - delay:
+                      minutes: !input motion_duration
+            default:
+              - delay:
+                  minutes: "{{ [door_duration, motion_duration] | max }}"
+          - service: light.turn_off
+            target:
+              entity_id: !input light
+
+mode: restart
